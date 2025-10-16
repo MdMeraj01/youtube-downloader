@@ -464,7 +464,7 @@ def terms():
 
 @app.route("/contact")
 def contact():
-    return "Contact Page - Coming Soon"
+    return render_template("contact.html")
 
 @app.route("/test")
 def test():
