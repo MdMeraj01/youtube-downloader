@@ -32,6 +32,20 @@ def get_ydl_opts():
         'quiet': True,
         'no_warnings': False,
         'extract_flat': False,
+        # ✅ ADD THESE OPTIONS TO AVOID BOT DETECTION
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+            'Connection': 'keep-alive',
+        }
     }
 
 def format_file_size(size_bytes):
@@ -258,7 +272,7 @@ def download_video():
                     "file_id": file_id
                 }
 
-        # Better format selection for high qualities
+        # Better format selection with bot avoidance
         if quality == 'best':
             format_spec = 'best[height<=4320]'  # Up to 8K
         else:
@@ -270,6 +284,21 @@ def download_video():
             "no_warnings": False,
             "format": format_spec,
             "progress_hooks": [progress_hook],
+            # ✅ ADD BOT AVOIDANCE TO DOWNLOAD OPTIONS TOO
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+            },
+            # ✅ RETRY SETTINGS
+            'retries': 10,
+            'fragment_retries': 10,
+            'skip_unavailable_fragments': True,
         }
 
         download_progress[file_id] = {
@@ -299,7 +328,7 @@ def download_video():
                     download_name=f"{video_title}.{file_ext}"
                 )
                 
-                # Cleanup file after sending (Render has limited storage)
+                # Cleanup file after sending
                 try:
                     if os.path.exists(downloaded_file):
                         os.remove(downloaded_file)
@@ -385,6 +414,21 @@ def download_audio():
                 "preferredquality": "192",
             }],
             "progress_hooks": [progress_hook],
+            # ✅ ADD BOT AVOIDANCE
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+            },
+            # ✅ RETRY SETTINGS
+            'retries': 10,
+            'fragment_retries': 10,
+            'skip_unavailable_fragments': True,
         }
 
         download_progress[file_id] = {
@@ -472,3 +516,58 @@ def test():
 
 # ✅ Render specific - No need to manually run the app
 # Render automatically runs: gunicorn app:app
+if __name__ == '__main__':
+    app.run(debug=True)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
