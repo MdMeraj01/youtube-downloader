@@ -1,504 +1,490 @@
-import os
-from flask import Flask, request, jsonify, send_file, render_template
-from flask_cors import CORS
-import yt_dlp
-import uuid
-import math
-import random
-import time
-
-app = Flask(__name__)
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DOWNLOAD_FOLDER = os.path.join(BASE_DIR, 'downloads')
-TEMPLATE_FOLDER = os.path.join(BASE_DIR, 'templates') 
-STATIC_FOLDER = os.path.join(BASE_DIR, 'static')
-
-app = Flask(__name__, 
-    template_folder=TEMPLATE_FOLDER, 
-    static_folder=STATIC_FOLDER
-)
-
-os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-CORS(app)
-download_progress = {}
-
-# ✅ SIMPLIFIED & WORKING CONFIGURATION
-def get_ydl_opts():
-    return {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': False,
-        
-        # ✅ MINIMAL WORKING CONFIG
-        'format': 'best',
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-        },
-        
-        # ✅ NETWORK SETTINGS
-        'socket_timeout': 30,
-        'retries': 3,
-        'fragment_retries': 3,
-        'skip_unavailable_fragments': True,
-    }
-
-def format_file_size(size_bytes):
-    if size_bytes is None:
-        return "Calculating..."
-    
-    if size_bytes == 0:
-        return "0 B"
-    
-    size_names = ["B", "KB", "MB", "GB"]
-    i = int(math.floor(math.log(size_bytes, 1024)))
-    p = math.pow(1024, i)
-    s = round(size_bytes / p, 2)
-    
-    return f"{s} {size_names[i]}"
-
-# ✅ FIXED VIDEO INFO WITH PROPER ERROR HANDLING
-@app.route("/info/video", methods=["GET"])
-def get_video_info():
-    url = request.args.get("url")
-    if not url:
-        return jsonify({"error": "No URL provided"}), 400
-
-    try:
-        ydl_opts = get_ydl_opts()
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            # ✅ CHECK IF INFO IS VALID
-            if not info:
-                return jsonify({"error": "Failed to fetch video information from YouTube"}), 500
-            
-            formats = []
-            all_formats = info.get('formats', [])
-            
-            for fmt in all_formats:
-                if fmt.get('vcodec') != 'none':
-                    filesize = fmt.get('filesize') or fmt.get('filesize_approx')
-                    
-                    # Calculate approximate size
-                    if not filesize and fmt.get('tbr') and info.get('duration'):
-                        tbr = fmt.get('tbr', 0) * 1000
-                        duration = info.get('duration', 0)
-                        filesize = (tbr * duration) / 8
-                    
-                    format_info = {
-                        'format_id': fmt.get('format_id', ''),
-                        'ext': fmt.get('ext', 'mp4'),
-                        'quality': fmt.get('format_note', ''),
-                        'height': fmt.get('height', 0),
-                        'width': fmt.get('width', 0),
-                        'filesize': format_file_size(filesize),
-                        'filesize_bytes': filesize,
-                        'vcodec': fmt.get('vcodec', ''),
-                        'acodec': fmt.get('acodec', ''),
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Downloader - Download Videos, Audio & Thumbnails</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        clifford: '#da373d',
                     }
-                    
-                    # Set quality label
-                    if fmt.get('height'):
-                        height = fmt['height']
-                        if height >= 4320:
-                            format_info['quality'] = "8K"
-                        elif height >= 2160:
-                            format_info['quality'] = "4K"
-                        elif height >= 1440:
-                            format_info['quality'] = "1440p"
-                        elif height >= 1080:
-                            format_info['quality'] = "1080p"
-                        elif height >= 720:
-                            format_info['quality'] = "720p"
-                        elif height >= 480:
-                            format_info['quality'] = "480p"
-                        elif height >= 360:
-                            format_info['quality'] = "360p"
-                        elif height >= 240:
-                            format_info['quality'] = "240p"
-                        elif height >= 144:
-                            format_info['quality'] = "144p"
-                        else:
-                            format_info['quality'] = f"{height}p"
-                    elif fmt.get('format_note'):
-                        format_info['quality'] = fmt['format_note']
-                    else:
-                        format_info['quality'] = 'Unknown'
-                    
-                    if format_info['quality'] not in ['', 'Unknown', 'none']:
-                        formats.append(format_info)
-            
-            # Sort and remove duplicates
-            formats.sort(key=lambda x: x.get('height', 0) or 0, reverse=True)
-            
-            seen_qualities = set()
-            unique_formats = []
-            
-            for fmt in formats:
-                quality = fmt.get('quality')
-                if quality and quality not in seen_qualities:
-                    seen_qualities.add(quality)
-                    unique_formats.append(fmt)
-            
-            return jsonify({
-                'title': info.get('title', 'YouTube Video'),
-                'duration': info.get('duration_string', 'Unknown'),
-                'uploader': info.get('uploader', 'Unknown'),
-                'thumbnail': info.get('thumbnail', ''),
-                'formats': unique_formats[:8]
-            })
-            
-    except Exception as e:
-        print(f"Video info error: {str(e)}")
-        error_msg = str(e)
-        
-        if "429" in error_msg or "Too Many Requests" in error_msg:
-            return jsonify({"error": "YouTube rate limit exceeded. Please try again in a few minutes."}), 429
-        elif "Sign in" in error_msg or "bot" in error_msg:
-            return jsonify({"error": "YouTube temporary restriction. Please try a different video."}), 423
-        elif "unavailable" in error_msg.lower():
-            return jsonify({"error": "Video is unavailable or private."}), 404
-        else:
-            return jsonify({"error": f"Failed to fetch video info: {error_msg}"}), 500
-
-# ✅ SIMILAR FIX FOR AUDIO INFO
-@app.route("/info/audio", methods=["GET"])
-def get_audio_info():
-    url = request.args.get("url")
-    if not url:
-        return jsonify({"error": "No URL provided"}), 400
-
-    try:
-        ydl_opts = get_ydl_opts()
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            # ✅ CHECK IF INFO IS VALID
-            if not info:
-                return jsonify({"error": "Failed to fetch audio information from YouTube"}), 500
-            
-            audio_formats = []
-            for fmt in info.get('formats', []):
-                if fmt.get('vcodec') == 'none' and fmt.get('acodec') != 'none':
-                    filesize = fmt.get('filesize') or fmt.get('filesize_approx')
-                    
-                    abr = fmt.get('abr', 0)
-                    format_info = {
-                        'format_id': fmt.get('format_id', ''),
-                        'ext': fmt.get('ext', 'mp3'),
-                        'abr': abr,
-                        'filesize': format_file_size(filesize),
-                        'filesize_bytes': filesize,
-                        'note': f"{abr}kbps" if abr else 'Best Quality'
-                    }
-                    audio_formats.append(format_info)
-            
-            audio_formats.sort(key=lambda x: x.get('abr', 0), reverse=True)
-            
-            seen_bitrates = set()
-            unique_formats = []
-            for fmt in audio_formats:
-                bitrate = fmt.get('abr')
-                if bitrate not in seen_bitrates:
-                    seen_bitrates.add(bitrate)
-                    unique_formats.append(fmt)
-            
-            return jsonify({
-                'title': info.get('title', 'YouTube Audio'),
-                'duration': info.get('duration_string', 'Unknown'),
-                'uploader': info.get('uploader', 'Unknown'),
-                'audio_formats': unique_formats[:3]
-            })
-            
-    except Exception as e:
-        print(f"Audio info error: {str(e)}")
-        error_msg = str(e)
-        
-        if "429" in error_msg or "Too Many Requests" in error_msg:
-            return jsonify({"error": "YouTube rate limit exceeded. Please try again in a few minutes."}), 429
-        elif "Sign in" in error_msg or "bot" in error_msg:
-            return jsonify({"error": "YouTube temporary restriction. Please try a different video."}), 423
-        else:
-            return jsonify({"error": f"Failed to fetch audio info: {error_msg}"}), 500
-
-# ✅ KEEP OTHER ROUTES THE SAME (download/video, download/audio, progress, health, etc.)
-@app.route("/download/video", methods=["GET"])
-def download_video():
-    try:
-        url = request.args.get("url")
-        quality = request.args.get("quality", "best")
-        file_id = request.args.get("file_id", str(uuid.uuid4()))
-        
-        if not url:
-            return jsonify({"error": "No URL provided"}), 400
-
-        output_template = os.path.join(DOWNLOAD_FOLDER, f"{file_id}.%(ext)s")
-
-        # Get video info
-        ydl_info_opts = get_ydl_opts()
-        with yt_dlp.YoutubeDL(ydl_info_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if not info:
-                return jsonify({"error": "Failed to get video information"}), 500
-            video_title = info.get('title', 'video').replace('/', '_').replace('\\', '_')[:100]
-
-        def progress_hook(d):
-            if d['status'] == 'downloading':
-                percent_str = d.get('_percent_str', '0%').strip()
-                try:
-                    if '%' in percent_str:
-                        percent_float = float(percent_str.replace('%', ''))
-                    else:
-                        percent_float = 0
-                except:
-                    percent_float = 0
-                
-                speed = d.get('_speed_str', '0 B/s')
-                total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
-                downloaded_bytes = d.get('downloaded_bytes', 0)
-                
-                if total_bytes:
-                    downloaded_mb = downloaded_bytes / (1024 * 1024)
-                    total_mb = total_bytes / (1024 * 1024)
-                    size_info = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
-                else:
-                    downloaded_mb = downloaded_bytes / (1024 * 1024)
-                    size_info = f"{downloaded_mb:.1f} MB"
-                
-                download_progress[file_id] = {
-                    "percent": percent_float,
-                    "status": f"Downloading...",
-                    "size_info": size_info,
-                    "speed": speed,
-                    "file_id": file_id
                 }
-                
-            elif d['status'] == 'finished':
-                download_progress[file_id] = {
-                    "percent": 100,
-                    "status": "Processing video...",
-                    "size_info": "Complete",
-                    "speed": "Processing...",
-                    "file_id": file_id
-                }
+            }
+        }
+    </script>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="bg-gray-50">
+    <!-- Sticky Header -->
+    <header class="sticky top-0 bg-white shadow-md z-50 transition-all duration-300">
+        <div class="container mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z"/>
+                    </svg>
+                </div>
+                <h1 class="text-xl font-bold text-gray-800">YouTube Downloader</h1>
+            </div>
+            <nav class="hidden md:flex space-x-8">
+                <a href="#hero" class="nav-link text-gray-600 font-medium">Home</a>
+                <a href="#video-downloader" class="nav-link text-gray-600 font-medium">Video Downloader</a>
+                <a href="#audio-downloader" class="nav-link text-gray-600 font-medium">Audio Downloader</a>
+                <a href="#thumbnail-downloader" class="nav-link text-gray-600 font-medium">Thumbnail Downloader</a>
+            </nav>
+            <button class="md:hidden p-2" onclick="toggleMobileMenu()">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                </svg>
+            </button>
+        </div>
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="hidden md:hidden bg-white border-t">
+            <div class="px-4 py-2 space-y-2">
+                <a href="#hero" class="block py-2 text-gray-600">Home</a>
+                <a href="#video-downloader" class="block py-2 text-gray-600">Video Downloader</a>
+                <a href="#audio-downloader" class="block py-2 text-gray-600">Audio Downloader</a>
+                <a href="#thumbnail-downloader" class="block py-2 text-gray-600">Thumbnail Downloader</a>
+            </div>
+        </div>
+    </header>
 
-        ydl_opts = {
-            "outtmpl": output_template,
-            "quiet": False,
-            "no_warnings": False,
-            "format": quality if quality != 'best' else 'best[height<=1080]',
-            "progress_hooks": [progress_hook],
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            },
-            'retries': 3,
-            'fragment_retries': 3,
+    <!-- Hero Section -->
+    <section id="hero" class="bg-gradient-to-br from-blue-50 to-purple-50 py-20">
+        <div class="container mx-auto px-4 text-center">
+            <div class="max-w-4xl mx-auto">
+                <div class="mb-8 fade-in-up">
+                    <div class="w-24 h-24 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <svg class="w-12 h-12 text-white" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z"/>
+                        </svg>
+                    </div>
+                    <h1 class="text-5xl md:text-6xl font-bold text-gray-800 mb-6">
+                        YouTube Downloader
+                    </h1>
+                    <p class="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
+                        Download YouTube videos in multiple qualities from 144p to 4K, convert to MP3 audio, 
+                        and grab high-quality thumbnails - all in one powerful tool.
+                    </p>
+                </div>
+                
+                <div class="grid md:grid-cols-3 gap-8 mb-12 fade-in-up">
+                    <div class="bg-white p-6 rounded-xl shadow-lg hover-scale">
+                        <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold mb-2">Video Downloads</h3>
+                        <p class="text-gray-600">Download in multiple qualities from 144p to 4K resolution</p>
+                    </div>
+                    
+                    <div class="bg-white p-6 rounded-xl shadow-lg hover-scale">
+                        <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold mb-2">Audio Conversion</h3>
+                        <p class="text-gray-600">Convert videos to high-quality MP3 audio files</p>
+                    </div>
+                    
+                    <div class="bg-white p-6 rounded-xl shadow-lg hover-scale">
+                        <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold mb-2">Thumbnail Downloads</h3>
+                        <p class="text-gray-600">Get high-resolution video thumbnails instantly</p>
+                    </div>
+                </div>
+                
+                <button onclick="scrollToDownloader()" class="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-8 py-4 rounded-xl font-semibold text-lg hover-scale transition-all duration-300">
+                    Get Started
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Downloader Sections -->
+    <section class="py-16">
+        <div class="container mx-auto px-4">
+            <!-- Tab Navigation -->
+            <div class="flex justify-center mb-12">
+                <div class="bg-white rounded-xl p-2 shadow-lg">
+                    <button onclick="switchTab('video')" id="video-tab" class="tab-button active px-6 py-3 rounded-lg font-medium transition-all duration-300">
+                        Video Downloader
+                    </button>
+                    <button onclick="switchTab('audio')" id="audio-tab" class="tab-button px-6 py-3 rounded-lg font-medium transition-all duration-300">
+                        Audio Downloader
+                    </button>
+                    <button onclick="switchTab('thumbnail')" id="thumbnail-tab" class="tab-button px-6 py-3 rounded-lg font-medium transition-all duration-300">
+                        Thumbnail Downloader
+                    </button>
+                </div>
+            </div>
+
+            <!-- Video Downloader Section -->
+            <div id="video-downloader" class="tab-content active">
+                <div class="max-w-4xl mx-auto">
+                    <!-- How to Use -->
+                    <div class="bg-blue-50 rounded-xl p-6 mb-8">
+                        <h3 class="text-lg font-semibold text-blue-800 mb-4">How to Download Videos:</h3>
+                        <div class="grid md:grid-cols-4 gap-4">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold">1</div>
+                                <span class="text-blue-700">Copy YouTube URL</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold">2</div>
+                                <span class="text-blue-700">Paste URL below</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold">3</div>
+                                <span class="text-blue-700">Click Fetch Info</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold">4</div>
+                                <span class="text-blue-700">Choose quality & download</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Input Section -->
+                    <div class="bg-white rounded-xl shadow-lg p-8 mb-8">
+                        <div class="flex flex-col md:flex-row gap-4">
+                            <input type="url" id="video-url" placeholder="Paste YouTube URL here..." 
+                                   class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            <button onclick="handleVideoFetch()" id="fetch-video-btn" 
+                                    class="bg-blue-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-600 transition-colors">
+                                Fetch Info
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Progress Section -->
+                    <div id="video-progress" class="hidden bg-white rounded-xl shadow-lg p-8 mb-8">
+                        <div class="text-center mb-4">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Fetching video information...</h3>
+                            <p id="video-progress-text" class="text-gray-600">0%</p>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3">
+                            <div id="video-progress-bar" class="bg-gradient-to-r from-blue-500 to-purple-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Results Section -->
+                    <div id="video-results" class="hidden">
+                        <div class="bg-white rounded-xl shadow-lg p-8">
+                            <div id="video-info" class="mb-8">
+                                <!-- Video info will be populated here -->
+                            </div>
+                            <div id="video-quality-table">
+                                <!-- Quality table will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Audio Downloader Section -->
+            <div id="audio-downloader" class="tab-content hidden">
+                <div class="max-w-4xl mx-auto">
+                    <!-- How to Use -->
+                    <div class="bg-green-50 rounded-xl p-6 mb-8">
+                        <h3 class="text-lg font-semibold text-green-800 mb-4">How to Download Audio:</h3>
+                        <div class="grid md:grid-cols-4 gap-4">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center font-bold">1</div>
+                                <span class="text-green-700">Copy YouTube URL</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center font-bold">2</div>
+                                <span class="text-green-700">Paste URL below</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center font-bold">3</div>
+                                <span class="text-green-700">Click Fetch Info</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center font-bold">4</div>
+                                <span class="text-green-700">Choose format & download</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Input Section -->
+                    <div class="bg-white rounded-xl shadow-lg p-8 mb-8">
+                        <div class="flex flex-col md:flex-row gap-4">
+                            <input type="url" id="audio-url" placeholder="Paste YouTube URL here..." 
+                                   class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent">
+                            <button onclick="handleAudioFetch()" id="fetch-audio-btn" 
+                                    class="bg-green-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-green-600 transition-colors">
+                                Fetch Info
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Progress Section -->
+                    <div id="audio-progress" class="hidden bg-white rounded-xl shadow-lg p-8 mb-8">
+                        <div class="text-center mb-4">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Fetching audio information...</h3>
+                            <p id="audio-progress-text" class="text-gray-600">0%</p>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3">
+                            <div id="audio-progress-bar" class="bg-gradient-to-r from-green-500 to-blue-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Results Section -->
+                    <div id="audio-results" class="hidden">
+                        <div class="bg-white rounded-xl shadow-lg p-8">
+                            <div id="audio-info" class="mb-8">
+                                <!-- Audio info will be populated here -->
+                            </div>
+                            <div id="audio-formats">
+                                <!-- Audio formats will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Thumbnail Downloader Section -->
+            <div id="thumbnail-downloader" class="tab-content hidden">
+                <div class="max-w-4xl mx-auto">
+                    <!-- How to Use -->
+                    <div class="bg-purple-50 rounded-xl p-6 mb-8">
+                        <h3 class="text-lg font-semibold text-purple-800 mb-4">How to Download Thumbnails:</h3>
+                        <div class="grid md:grid-cols-4 gap-4">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-purple-500 text-white rounded-full flex items-center justify-center font-bold">1</div>
+                                <span class="text-purple-700">Copy YouTube URL</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-purple-500 text-white rounded-full flex items-center justify-center font-bold">2</div>
+                                <span class="text-purple-700">Paste URL below</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-purple-500 text-white rounded-full flex items-center justify-center font-bold">3</div>
+                                <span class="text-purple-700">Click Fetch Info</span>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 bg-purple-500 text-white rounded-full flex items-center justify-center font-bold">4</div>
+                                <span class="text-purple-700">Choose resolution & download</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Input Section -->
+                    <div class="bg-white rounded-xl shadow-lg p-8 mb-8">
+                        <div class="flex flex-col md:flex-row gap-4">
+                            <input type="url" id="thumbnail-url" placeholder="Paste YouTube URL here..." 
+                                   class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                            <button onclick="handleThumbnailFetch()" id="fetch-thumbnail-btn" 
+                                    class="bg-purple-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-purple-600 transition-colors">
+                                Fetch Info
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Progress Section -->
+                    <div id="thumbnail-progress" class="hidden bg-white rounded-xl shadow-lg p-8 mb-8">
+                        <div class="text-center mb-4">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Fetching thumbnail information...</h3>
+                            <p id="thumbnail-progress-text" class="text-gray-600">0%</p>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3">
+                            <div id="thumbnail-progress-bar" class="bg-gradient-to-r from-purple-500 to-pink-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Results Section -->
+                    <div id="thumbnail-results" class="hidden">
+                        <div class="bg-white rounded-xl shadow-lg p-8">
+                            <div id="thumbnail-info" class="mb-8">
+                                <!-- Thumbnail info will be populated here -->
+                            </div>
+                            <div id="thumbnail-grid">
+                                <!-- Thumbnail grid will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-12">
+        <div class="container mx-auto px-4">
+            <div class="text-center mb-8">
+                <div class="flex items-center justify-center space-x-3 mb-4">
+                    <div class="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold">YouTube Downloader</h3>
+                </div>
+                <p class="text-gray-400 mb-6">Download YouTube content easily and efficiently</p>
+                
+                <!-- Social Links -->
+                <div class="flex justify-center space-x-6 mb-8">
+                    <!-- Github -->
+                    <a href="https://github.com/MdMeraj01" class="text-gray-400 hover:text-white transition-colors" target="_blank">
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                    </a>
+                    <!--linkedin-->
+                    <a href="https://www.linkedin.com/in/meraj-mohammad-28831032a" class="text-gray-400 hover:text-white transition-colors" target="_blank">
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                        </svg>
+                    </a>
+                    <!-- You Tube-->
+                    <a href="#" class="text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                        </svg>
+                    </a>
+                    <!--Instagram-->
+                    <a href="https://www.instagram.com/its_me_furkhan01?igsh=ZzB0anR0eGh3cnZ6" class="text-gray-400 hover:text-white transition-colors" target="_blank">
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zm10 2H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3zM12 8.5A3.5 3.5 0 1 1 8.5 12 3.5 3.5 0 0 1 12 8.5zm4.25-2.15a1.05 1.05 0 1 1-1.05 1.05 1.05 1.05 0 0 1 1.05-1.05z"/>
+                        </svg>
+                    </a>
+                </div>
+                
+                <!-- Footer Links -->
+                <div class="flex justify-center space-x-8 mb-8">
+                    <a href="/privacy" class="text-gray-400 hover:text-white transition-colors">Privacy Policy</a>
+                    <a href="/terms" class="text-gray-400 hover:text-white transition-colors">Terms of Service</a>
+                    <a href="/contact" class="text-gray-400 hover:text-white transition-colors">Contact</a>
+                </div>
+
+                <p class="text-gray-400">© 2025 YouTube Downloader. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Thank You Modal -->
+    <div id="thank-you-modal" class="fixed inset-0 bg-black bg-opacity-50 modal-backdrop hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-8 max-w-md mx-4 text-center">
+            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+            </div>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Thank You!</h3>
+            <p class="text-gray-600 mb-6">Thank you for using YouTube Downloader! Please visit again.</p>
+            <button onclick="closeThankYouModal()" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                Back to Home
+            </button>
+        </div>
+    </div>
+
+    <!-- Inline JavaScript for critical functions -->
+    <script>
+        // Basic navigation functions
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu');
+            menu.classList.toggle('hidden');
         }
 
-        download_progress[file_id] = {
-            "percent": 0, 
-            "status": "Starting download...", 
-            "size_info": "0/0 MB",
-            "speed": "Starting...",
-            "file_id": file_id
+        function scrollToDownloader() {
+            document.getElementById('video-downloader').scrollIntoView({ behavior: 'smooth' });
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-
-        for f in os.listdir(DOWNLOAD_FOLDER):
-            if f.startswith(file_id):
-                downloaded_file = os.path.join(DOWNLOAD_FOLDER, f)
-                file_ext = f.split('.')[-1] if '.' in f else 'mp4'
-                
-                if file_id in download_progress:
-                    del download_progress[file_id]
-                    
-                response = send_file(
-                    downloaded_file, 
-                    as_attachment=True, 
-                    download_name=f"{video_title}.{file_ext}"
-                )
-                
-                try:
-                    if os.path.exists(downloaded_file):
-                        os.remove(downloaded_file)
-                except:
-                    pass
-                    
-                return response
-
-        return jsonify({"error": "File not found after download"}), 500
-
-    except Exception as e:
-        print(f"Download error: {e}")
-        file_id = request.args.get("file_id")
-        if file_id and file_id in download_progress:
-            del download_progress[file_id]
-        return jsonify({"error": f"Download failed: {str(e)}"}), 500
-
-# ✅ AUDIO DOWNLOAD (SAME STRUCTURE)
-@app.route("/download/audio", methods=["GET"])
-def download_audio():
-    try:
-        url = request.args.get("url")
-        file_id = request.args.get("file_id", str(uuid.uuid4()))
-        
-        if not url:
-            return jsonify({"error": "No URL provided"}), 400
-
-        output_template = os.path.join(DOWNLOAD_FOLDER, f"{file_id}.%(ext)s")
-
-        ydl_info_opts = get_ydl_opts()
-        with yt_dlp.YoutubeDL(ydl_info_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if not info:
-                return jsonify({"error": "Failed to get audio information"}), 500
-            audio_title = info.get('title', 'audio').replace('/', '_').replace('\\', '_')[:100]
-
-        def progress_hook(d):
-            if d['status'] == 'downloading':
-                percent_str = d.get('_percent_str', '0%').strip()
-                try:
-                    if '%' in percent_str:
-                        percent_float = float(percent_str.replace('%', ''))
-                    else:
-                        percent_float = 0
-                except:
-                    percent_float = 0
-                
-                speed = d.get('_speed_str', '0 B/s')
-                total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
-                downloaded_bytes = d.get('downloaded_bytes', 0)
-                
-                if total_bytes:
-                    downloaded_mb = downloaded_bytes / (1024 * 1024)
-                    total_mb = total_bytes / (1024 * 1024)
-                    size_info = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
-                else:
-                    downloaded_mb = downloaded_bytes / (1024 * 1024)
-                    size_info = f"{downloaded_mb:.1f} MB"
-                
-                download_progress[file_id] = {
-                    "percent": percent_float,
-                    "status": f"Downloading...",
-                    "size_info": size_info,
-                    "speed": speed,
-                    "file_id": file_id
-                }
-                
-            elif d['status'] == 'finished':
-                download_progress[file_id] = {
-                    "percent": 100,
-                    "status": "Converting to MP3...",
-                    "size_info": "Converting...",
-                    "speed": "Processing...",
-                    "file_id": file_id
-                }
-
-        ydl_opts = {
-            "outtmpl": output_template,
-            "quiet": False,
-            "no_warnings": False,
-            "format": "bestaudio/best",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }],
-            "progress_hooks": [progress_hook],
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            },
-            'retries': 3,
-            'fragment_retries': 3,
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active', 'bg-blue-500', 'text-white');
+                btn.classList.add('text-gray-600');
+            });
+            
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.add('hidden');
+                content.classList.remove('active');
+            });
+            
+            const tabButton = document.getElementById(`${tab}-tab`);
+            const tabContent = document.getElementById(`${tab}-downloader`);
+            
+            tabButton.classList.add('active', 'bg-blue-500', 'text-white');
+            tabButton.classList.remove('text-gray-600');
+            
+            tabContent.classList.remove('hidden');
+            tabContent.classList.add('active');
         }
 
-        download_progress[file_id] = {
-            "percent": 0, 
-            "status": "Starting audio download...", 
-            "size_info": "0/0 MB",
-            "speed": "Starting...",
-            "file_id": file_id
+        function closeThankYouModal() {
+            document.getElementById('thank-you-modal').classList.add('hidden');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        function showThankYouModal() {
+            document.getElementById('thank-you-modal').classList.remove('hidden');
+        }
 
-        for f in os.listdir(DOWNLOAD_FOLDER):
-            if f.startswith(file_id) and f.endswith('.mp3'):
-                downloaded_file = os.path.join(DOWNLOAD_FOLDER, f)
-                
-                if file_id in download_progress:
-                    del download_progress[file_id]
-                    
-                response = send_file(
-                    downloaded_file, 
-                    as_attachment=True, 
-                    download_name=f"{audio_title}.mp3"
-                )
-                
-                try:
-                    if os.path.exists(downloaded_file):
-                        os.remove(downloaded_file)
-                    original_file = downloaded_file.replace('.mp3', '.m4a')
-                    if os.path.exists(original_file):
-                        os.remove(original_file)
-                except:
-                    pass
-                    
-                return response
+        // Handler functions - NO DUPLICATES
+        function handleVideoFetch() {
+            const url = document.getElementById('video-url').value;
+            if (!url) {
+                alert('Please enter a YouTube URL');
+                return;
+            }
+            if (typeof window.fetchVideoInfo === 'function') {
+                window.fetchVideoInfo();
+            } else {
+                alert('Application is loading, please try again...');
+            }
+        }
 
-        return jsonify({"error": "File not found after download"}), 500
+        function handleAudioFetch() {
+            const url = document.getElementById('audio-url').value;
+            if (!url) {
+                alert('Please enter a YouTube URL');
+                return;
+            }
+            if (typeof window.fetchAudioInfo === 'function') {
+                window.fetchAudioInfo();
+            } else {
+                alert('Application is loading, please try again...');
+            }
+        }
 
-    except Exception as e:
-        print(f"Audio download error: {e}")
-        file_id = request.args.get("file_id")
-        if file_id and file_id in download_progress:
-            del download_progress[file_id]
-        return jsonify({"error": f"Audio download failed: {str(e)}"}), 500
+        function handleThumbnailFetch() {
+            const url = document.getElementById('thumbnail-url').value;
+            if (!url) {
+                alert('Please enter a YouTube URL');
+                return;
+            }
+            if (typeof window.fetchThumbnailInfo === 'function') {
+                window.fetchThumbnailInfo();
+            } else {
+                alert('Application is loading, please try again...');
+            }
+        }
 
-# ✅ KEEP OTHER ROUTES EXACTLY THE SAME
-@app.route("/progress/<file_id>")
-def get_progress(file_id):
-    progress = download_progress.get(file_id, {
-        "percent": 0, 
-        "status": "Starting...", 
-        "size_info": "0/0 MB",
-        "speed": "0 B/s"
-    })
-    return jsonify(progress)
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const menu = document.getElementById('mobile-menu');
+            const menuButton = document.querySelector('button[onclick="toggleMobileMenu()"]');
+            
+            if (menu && !menu.contains(event.target) && menuButton && !menuButton.contains(event.target)) {
+                menu.classList.add('hidden');
+            }
+        });
+    </script>
 
-@app.route("/health")
-def health_check():
-    return jsonify({"status": "healthy", "message": "YouTube Downloader is running"})
-
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-@app.route("/privacy")
-def privacy():
-    return render_template("privacy.html")
-
-@app.route("/terms") 
-def terms():
-    return render_template("terms.html")
-
-@app.route("/contact")
-def contact():
-    return render_template("contact.html")
-
-@app.route("/test")
-def test():
-    return jsonify({"status": "success", "message": "Server working!"})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    <!-- External JavaScript file -->
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html> 
