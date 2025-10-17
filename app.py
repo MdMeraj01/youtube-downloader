@@ -7,7 +7,7 @@ import math
 
 app = Flask(__name__)
 
-# ✅ Railway compatible paths
+# ✅ Render compatible paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOWNLOAD_FOLDER = os.path.join(BASE_DIR, 'downloads')
 TEMPLATE_FOLDER = os.path.join(BASE_DIR, 'templates') 
@@ -299,7 +299,7 @@ def download_video():
                     download_name=f"{video_title}.{file_ext}"
                 )
                 
-                # Cleanup file after sending (Railway has limited storage)
+                # Cleanup file after sending (Render has limited storage)
                 try:
                     if os.path.exists(downloaded_file):
                         os.remove(downloaded_file)
@@ -444,7 +444,7 @@ def get_progress(file_id):
     })
     return jsonify(progress)
 
-# ✅ HEALTH CHECK (Railway requires this)
+# ✅ HEALTH CHECK (Render requires this)
 @app.route("/health")
 def health_check():
     return jsonify({"status": "healthy", "message": "YouTube Downloader is running"})
@@ -470,7 +470,5 @@ def contact():
 def test():
     return jsonify({"status": "success", "message": "Server working!"})
 
-# ✅ Railway specific - Get port from environment
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+# ✅ Render specific - No need to manually run the app
+# Render automatically runs: gunicorn app:app
