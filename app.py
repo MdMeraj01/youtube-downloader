@@ -227,7 +227,7 @@ def get_audio_info():
         else:
             return jsonify({"error": f"Failed to fetch audio info: {error_msg}"}), 500
 
-# ✅ KEEP OTHER ROUTES THE SAME (download/video, download/audio, progress, health, etc.)
+# ✅ VIDEO DOWNLOAD
 @app.route("/download/video", methods=["GET"])
 def download_video():
     try:
@@ -343,7 +343,7 @@ def download_video():
             del download_progress[file_id]
         return jsonify({"error": f"Download failed: {str(e)}"}), 500
 
-# ✅ AUDIO DOWNLOAD (SAME STRUCTURE)
+# ✅ AUDIO DOWNLOAD
 @app.route("/download/audio", methods=["GET"])
 def download_audio():
     try:
@@ -464,7 +464,7 @@ def download_audio():
             del download_progress[file_id]
         return jsonify({"error": f"Audio download failed: {str(e)}"}), 500
 
-# ✅ KEEP OTHER ROUTES EXACTLY THE SAME
+# ✅ PROGRESS CHECK ROUTE
 @app.route("/progress/<file_id>")
 def get_progress(file_id):
     progress = download_progress.get(file_id, {
@@ -475,10 +475,12 @@ def get_progress(file_id):
     })
     return jsonify(progress)
 
+# ✅ HEALTH CHECK
 @app.route("/health")
 def health_check():
     return jsonify({"status": "healthy", "message": "YouTube Downloader is running"})
 
+# ✅ MAIN ROUTES
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -499,6 +501,7 @@ def contact():
 def test():
     return jsonify({"status": "success", "message": "Server working!"})
 
+# ✅ Render specific
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
