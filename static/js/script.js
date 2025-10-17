@@ -48,29 +48,26 @@ function switchTab(tab) {
     currentTab = tab;
 }
 
-// Progress animation function
-function animateProgress(progressBarId, progressTextId, callback) {
-    const progressBar = document.getElementById(progressBarId);
-    const progressText = document.getElementById(progressTextId);
-    let progress = 0;
+// ✅ FIXED: Progress update function
+function updateProgress(type, percent, status) {
+    const progressBar = document.getElementById(`${type}-progress-bar`);
+    const progressText = document.getElementById(`${type}-progress-text`);
     
-    const interval = setInterval(() => {
-        progress += Math.random() * 15;
-        if (progress > 100) progress = 100;
-        
-        progressBar.style.width = progress + '%';
-        progressText.textContent = Math.round(progress) + '%';
-        
-        if (progress >= 100) {
-            clearInterval(interval);
-            setTimeout(callback, 500);
-        }
-    }, 100);
+    if (progressBar) {
+        progressBar.style.width = percent + '%';
+    }
+    if (progressText) {
+        progressText.textContent = status;
+    }
 }
 
 // ✅ FIXED: Video downloader functionality
 async function fetchVideoInfo() {
     const url = document.getElementById('video-url').value;
+    const fetchBtn = document.getElementById('fetch-video-btn');
+    const progressSection = document.getElementById('video-progress');
+    const resultsSection = document.getElementById('video-results');
+    
     if (!url) {
         alert('Please enter a YouTube URL');
         return;
@@ -81,56 +78,52 @@ async function fetchVideoInfo() {
         return;
     }
 
-    // Show progress
-    document.getElementById('video-progress').classList.remove('hidden');
-    document.getElementById('video-results').classList.add('hidden');
-
     try {
-        let progress = 0;
-        const progressInterval = setInterval(() => {
-            progress += Math.random() * 15;
-            if (progress > 90) progress = 90;
-            
-            document.getElementById('video-progress-bar').style.width = progress + '%';
-            document.getElementById('video-progress-text').textContent = Math.round(progress) + '% - Fetching video info...';
-        }, 200);
+        // Show progress
+        fetchBtn.disabled = true;
+        fetchBtn.textContent = 'Fetching...';
+        progressSection.classList.remove('hidden');
+        resultsSection.classList.add('hidden');
+        
+        updateProgress('video', 0, 'Starting...');
 
-        const resp = await fetch(`/info/video?url=${encodeURIComponent(url)}`);
-        
-        clearInterval(progressInterval);
-        
-        if (!resp.ok) {
-            const errorData = await resp.json();
-            throw new Error(errorData.error || 'Server error: ' + resp.status);
+        const response = await fetch(`/info/video?url=${encodeURIComponent(url)}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to fetch video info');
         }
+
+        updateProgress('video', 100, 'Complete!');
         
-        const data = await resp.json();
-        
-        // Complete progress bar
-        document.getElementById('video-progress-bar').style.width = '100%';
-        document.getElementById('video-progress-text').textContent = '100% - Complete!';
-        
+        // Show results after a brief delay
         setTimeout(() => {
-            document.getElementById('video-progress').classList.add('hidden');
             displayVideoResults(data, url);
+            progressSection.classList.add('hidden');
+            resultsSection.classList.remove('hidden');
         }, 500);
-        
+
     } catch (error) {
-        document.getElementById('video-progress').classList.add('hidden');
-        alert('Error: ' + error.message);
         console.error('Video fetch error:', error);
+        alert(`Error: ${error.message}`);
+    } finally {
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = 'Fetch Info';
+        progressSection.classList.add('hidden');
     }
 }
-// ✅ IMPROVED: Show ALL qualities including 4K/8K
+
+// ✅ FIXED: Display video results function
 function displayVideoResults(data, originalUrl) {
     const videoInfo = document.getElementById('video-info');
+    const qualityTable = document.getElementById('video-quality-table');
     const thumbnail = data.thumbnail || '';
 
     videoInfo.innerHTML = `
-        <div class="flex flex-col md:flex-row gap-6 fade-in-up">
+        <div class="flex flex-col md:flex-row gap-6">
             <div class="md:w-1/3">
                 <img src="${thumbnail}" alt="Video thumbnail" 
-                     class="w-full rounded-lg shadow-lg hover-scale cursor-pointer"
+                     class="w-full rounded-lg shadow-lg"
                      onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIwIiBoZWlnaHQ9IjE4MCIgdmlld0JveD0iMCAwIDMyMCAxODAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMjAiIGhlaWdodD0iMTgwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xMzAgOTBMMTcwIDExMFY3MEwxMzAgOTBaIiBmaWxsPSIjOUI5QkEwIi8+Cjx0ZXh0IHg9IjE2MCIgeT0iMTMwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjOUI5QkEwIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiPlRodW1ibmFpbCBub3QgYXZhaWxhYmxlPC90ZXh0Pgo8L3N2Zz4K';">
             </div>
             <div class="md:w-2/3">
@@ -153,7 +146,6 @@ function displayVideoResults(data, originalUrl) {
         </div>
     `;
 
-    const qualityTable = document.getElementById('video-quality-table');
     const formats = data.formats || [];
 
     if (formats.length === 0) {
@@ -166,15 +158,11 @@ function displayVideoResults(data, originalUrl) {
                 </button>
             </div>
         `;
-        document.getElementById('video-results').classList.remove('hidden');
         return;
     }
 
     let tableHTML = `
         <h4 class="text-lg font-semibold text-gray-800 mb-4">Available Quality Options (${formats.length} formats):</h4>
-        <div class="bg-blue-50 rounded-lg p-4 mb-4">
-            <p class="text-blue-700 text-sm">🎥 <strong>Real Qualities Found:</strong> ${formats.map(f => f.quality).join(', ')}</p>
-        </div>
         <div class="hidden md:block">
             <table class="w-full">
                 <thead>
@@ -205,7 +193,7 @@ function displayVideoResults(data, originalUrl) {
         }
         
         tableHTML += `
-            <tr class="border-b border-gray-100 slide-in-left" style="animation-delay: ${idx * 0.05}s">
+            <tr class="border-b border-gray-100">
                 <td class="py-3 px-4 ${qualityClass}">${qualityLabel}</td>
                 <td class="py-3 px-4 text-gray-600">${extension.toUpperCase()}</td>
                 <td class="py-3 px-4 text-gray-600">${fileSize}</td>
@@ -242,7 +230,7 @@ function displayVideoResults(data, originalUrl) {
         }
         
         tableHTML += `
-            <div class="bg-gray-50 rounded-lg p-4 slide-in-left" style="animation-delay: ${idx * 0.05}s">
+            <div class="bg-gray-50 rounded-lg p-4">
                 <div class="flex justify-between items-center mb-2">
                     <span class="${qualityClass}">${qualityLabel}</span>
                     <span class="text-gray-600">${extension.toUpperCase()}</span>
@@ -260,13 +248,15 @@ function displayVideoResults(data, originalUrl) {
 
     tableHTML += '</div>';
     qualityTable.innerHTML = tableHTML;
-    document.getElementById('video-results').classList.remove('hidden');
 }
- 
 
-// ✅ IMPROVED: Audio downloader with real qualities
+// ✅ FIXED: Audio downloader functionality
 async function fetchAudioInfo() {
     const url = document.getElementById('audio-url').value;
+    const fetchBtn = document.getElementById('fetch-audio-btn');
+    const progressSection = document.getElementById('audio-progress');
+    const resultsSection = document.getElementById('audio-results');
+    
     if (!url) {
         alert('Please enter a YouTube URL');
         return;
@@ -277,49 +267,44 @@ async function fetchAudioInfo() {
         return;
     }
 
-    document.getElementById('audio-progress').classList.remove('hidden');
-    document.getElementById('audio-results').classList.add('hidden');
-
     try {
-        let progress = 0;
-        const progressInterval = setInterval(() => {
-            progress += Math.random() * 15;
-            if (progress > 90) progress = 90;
-            
-            document.getElementById('audio-progress-bar').style.width = progress + '%';
-            document.getElementById('audio-progress-text').textContent = Math.round(progress) + '% - Fetching audio info...';
-        }, 200);
+        fetchBtn.disabled = true;
+        fetchBtn.textContent = 'Fetching...';
+        progressSection.classList.remove('hidden');
+        resultsSection.classList.add('hidden');
+        
+        updateProgress('audio', 0, 'Starting...');
 
-        const resp = await fetch(`/info/audio?url=${encodeURIComponent(url)}`);
-        
-        clearInterval(progressInterval);
-        
-        if (!resp.ok) {
-            const errorData = await resp.json();
-            throw new Error(errorData.error || 'Server error: ' + resp.status);
+        const response = await fetch(`/info/audio?url=${encodeURIComponent(url)}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to fetch audio info');
         }
-        
-        const data = await resp.json();
-        
-        document.getElementById('audio-progress-bar').style.width = '100%';
-        document.getElementById('audio-progress-text').textContent = '100% - Complete!';
+
+        updateProgress('audio', 100, 'Complete!');
         
         setTimeout(() => {
-            document.getElementById('audio-progress').classList.add('hidden');
             displayAudioResults(data, url);
+            progressSection.classList.add('hidden');
+            resultsSection.classList.remove('hidden');
         }, 500);
-        
+
     } catch (error) {
-        document.getElementById('audio-progress').classList.add('hidden');
-        alert('Error: ' + error.message);
         console.error('Audio fetch error:', error);
+        alert(`Error: ${error.message}`);
+    } finally {
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = 'Fetch Info';
+        progressSection.classList.add('hidden');
     }
 }
 
+// ✅ FIXED: Display audio results
 function displayAudioResults(data, originalUrl) {
     const audioInfo = document.getElementById('audio-info');
     audioInfo.innerHTML = `
-        <div class="text-center fade-in-up">
+        <div class="text-center">
             <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
@@ -337,13 +322,12 @@ function displayAudioResults(data, originalUrl) {
         audioFormats.innerHTML = `
             <div class="text-center py-8">
                 <p class="text-gray-600 mb-4">No audio formats found for this video.</p>
-                <button onclick="startAudioDownload('${originalUrl}', 'bestaudio')" 
+                <button onclick="startAudioDownload('${originalUrl}')" 
                         class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
                     Download Best Available Audio
                 </button>
             </div>
         `;
-        document.getElementById('audio-results').classList.remove('hidden');
         return;
     }
     
@@ -351,19 +335,18 @@ function displayAudioResults(data, originalUrl) {
     
     formatsHTML += '<div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">';
     
-    formats.forEach((format, idx) => {
+    formats.forEach((format) => {
         const bitrate = format.abr ? `${format.abr}kbps` : '';
         const extension = format.ext || 'mp3';
         const fileSize = format.filesize || 'Calculating...';
-        const formatId = format.format_id || 'bestaudio';
         const note = format.note || 'Best Quality';
         
         formatsHTML += `
-            <div class="bg-green-50 rounded-lg p-6 text-center hover-scale slide-in-left" style="animation-delay:${idx * 0.05}s">
+            <div class="bg-green-50 rounded-lg p-6 text-center">
                 <h5 class="font-semibold text-gray-800 mb-2">${extension.toUpperCase()} ${bitrate}</h5>
                 <p class="text-gray-600 mb-1">${note}</p>
                 <p class="text-gray-600 mb-4">${fileSize}</p>
-                <button onclick="startAudioDownload('${originalUrl}', '${formatId}')" 
+                <button onclick="startAudioDownload('${originalUrl}')" 
                         class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
                     Download MP3
                 </button>
@@ -374,12 +357,15 @@ function displayAudioResults(data, originalUrl) {
     formatsHTML += '</div>';
     
     audioFormats.innerHTML = formatsHTML;
-    document.getElementById('audio-results').classList.remove('hidden');
 }
 
 // ✅ FIXED: Thumbnail downloader functionality
 async function fetchThumbnailInfo() {
     const url = document.getElementById('thumbnail-url').value;
+    const fetchBtn = document.getElementById('fetch-thumbnail-btn');
+    const progressSection = document.getElementById('thumbnail-progress');
+    const resultsSection = document.getElementById('thumbnail-results');
+    
     if (!url) {
         alert('Please enter a YouTube URL');
         return;
@@ -390,52 +376,46 @@ async function fetchThumbnailInfo() {
         return;
     }
 
-    document.getElementById('thumbnail-progress').classList.remove('hidden');
-    document.getElementById('thumbnail-results').classList.add('hidden');
-
     try {
-        // Real progress animation for fetching
-        let progress = 0;
-        const progressInterval = setInterval(() => {
-            progress += Math.random() * 15;
-            if (progress > 90) progress = 90;
-            
-            document.getElementById('thumbnail-progress-bar').style.width = progress + '%';
-            document.getElementById('thumbnail-progress-text').textContent = Math.round(progress) + '% - Fetching thumbnail info...';
-        }, 200);
+        fetchBtn.disabled = true;
+        fetchBtn.textContent = 'Fetching...';
+        progressSection.classList.remove('hidden');
+        resultsSection.classList.add('hidden');
+        
+        updateProgress('thumbnail', 0, 'Starting...');
 
-        const resp = await fetch(`/info/video?url=${encodeURIComponent(url)}`);
-        
-        clearInterval(progressInterval);
-        
-        if (!resp.ok) {
-            throw new Error('Server error: ' + resp.status);
+        const response = await fetch(`/info/video?url=${encodeURIComponent(url)}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to fetch thumbnail info');
         }
-        
-        const data = await resp.json();
-        
-        // Complete progress bar
-        document.getElementById('thumbnail-progress-bar').style.width = '100%';
-        document.getElementById('thumbnail-progress-text').textContent = '100% - Complete!';
+
+        updateProgress('thumbnail', 100, 'Complete!');
         
         setTimeout(() => {
-            document.getElementById('thumbnail-progress').classList.add('hidden');
             displayThumbnailResults(data, url);
+            progressSection.classList.add('hidden');
+            resultsSection.classList.remove('hidden');
         }, 500);
-        
+
     } catch (error) {
-        document.getElementById('thumbnail-progress').classList.add('hidden');
-        alert('Error: ' + error.message);
         console.error('Thumbnail fetch error:', error);
+        alert(`Error: ${error.message}`);
+    } finally {
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = 'Fetch Info';
+        progressSection.classList.add('hidden');
     }
 }
 
+// ✅ FIXED: Display thumbnail results
 function displayThumbnailResults(data, originalUrl) {
     const thumbnailInfo = document.getElementById('thumbnail-info');
     const thumbnailGrid = document.getElementById('thumbnail-grid');
     
     thumbnailInfo.innerHTML = `
-        <div class="text-center fade-in-up">
+        <div class="text-center">
             <h3 class="text-xl font-bold text-gray-800 mb-2">${data.title || 'No title available'}</h3>
             <p class="text-gray-600">Channel: ${data.uploader || 'Unknown'}</p>
         </div>
@@ -446,28 +426,27 @@ function displayThumbnailResults(data, originalUrl) {
     let gridHTML = `
         <h4 class="text-lg font-semibold text-gray-800 mb-6">Available Thumbnail:</h4>
         <div class="grid md:grid-cols-1 gap-6">
-            <div class="bg-white rounded-lg p-6 text-center hover-scale">
+            <div class="bg-white rounded-lg p-6 text-center">
                 <div class="mb-4">
                     <img src="${thumbnailUrl}" alt="Video thumbnail" 
                          class="mx-auto rounded-lg shadow-lg max-w-full h-auto max-h-64"
                          onerror="this.style.display='none'">
                 </div>
                 <div class="space-y-3">
-                    <button onclick="downloadThumbnail('${originalUrl}', 'maxres')" 
+                    <button onclick="downloadThumbnail('${thumbnailUrl}')" 
                             class="w-full bg-purple-500 text-white py-3 rounded-lg hover:bg-purple-600 transition-colors font-medium">
-                        Download High Quality Thumbnail
+                        Download Thumbnail
                     </button>
-                    <p class="text-gray-600 text-sm">Click to download the highest quality thumbnail available</p>
+                    <p class="text-gray-600 text-sm">Click to download the thumbnail</p>
                 </div>
             </div>
         </div>
     `;
     
     thumbnailGrid.innerHTML = gridHTML;
-    document.getElementById('thumbnail-results').classList.remove('hidden');
 }
 
-// ✅ LOADER FUNCTIONS
+// ✅ FIXED: LOADER FUNCTIONS
 function showLoaderWithProgress() {
     const loader = document.createElement("div");
     loader.id = "download-loader";
@@ -497,19 +476,18 @@ function updateLoaderProgress(percent, status = "", sizeInfo = "", speed = "") {
     const sizeInfoEl = document.getElementById("loader-size-info");
     const speedEl = document.getElementById("loader-speed");
     
-    if (bar && text) {
+    if (bar) {
         bar.style.width = percent + "%";
+    }
+    if (text) {
         text.textContent = percent + "%";
     }
-    
     if (statusEl && status) {
         statusEl.textContent = status;
     }
-    
     if (sizeInfoEl && sizeInfo) {
         sizeInfoEl.textContent = sizeInfo;
     }
-    
     if (speedEl && speed) {
         speedEl.textContent = speed;
     }
@@ -520,222 +498,125 @@ function hideLoader() {
     if (loader) loader.remove();
 }
 
-// ✅ FIXED DOWNLOAD FUNCTIONS
+// ✅ FIXED: Video download function
 function startVideoDownload(url, quality) {
-    const fileId = Date.now().toString();
+    const fileId = 'file_' + Date.now().toString();
     showLoaderWithProgress();
     updateLoaderProgress(0, "Starting video download...", "0/0 MB", "Starting...");
 
-    let progressInterval;
-
-    function checkProgress() {
-        progressInterval = setInterval(async () => {
-            try {
-                const resp = await fetch(`/progress/${fileId}`);
-                const data = await resp.json();
-                
-                if (data.percent !== undefined) {
-                    updateLoaderProgress(
-                        data.percent, 
-                        data.status, 
-                        data.size_info || "", 
-                        data.speed || ""
-                    );
-                    
-                    if (data.percent >= 100) {
-                        clearInterval(progressInterval);
-                        setTimeout(() => {
-                            hideLoader();
-                            showThankYouModal();
-                        }, 1500);
-                    }
-                }
-            } catch (error) {
-                console.error("Progress check error:", error);
-            }
-        }, 500);
-    }
-
-    checkProgress();
-
-    const xhr = new XMLHttpRequest();
-    xhr.open("GET", `/download/video?url=${encodeURIComponent(url)}&quality=${encodeURIComponent(quality)}&file_id=${fileId}`, true);
-    xhr.responseType = "blob";
-
-    xhr.onload = function () {
-        clearInterval(progressInterval);
-        
-        if (xhr.status === 200) {
-            updateLoaderProgress(100, "Download completed!", "Complete", "Done");
+    // Open download in new tab
+    const downloadUrl = `/download/video?url=${encodeURIComponent(url)}&quality=${encodeURIComponent(quality)}&file_id=${fileId}`;
+    window.open(downloadUrl, '_blank');
+    
+    // Monitor progress
+    const progressInterval = setInterval(async () => {
+        try {
+            const response = await fetch(`/progress/${fileId}`);
+            const data = await response.json();
             
-            setTimeout(() => {
-                const blob = xhr.response;
-                const contentDisposition = xhr.getResponseHeader('Content-Disposition');
-                let filename = "video.mp4";
+            if (data.percent !== undefined) {
+                updateLoaderProgress(
+                    data.percent, 
+                    data.status, 
+                    data.size_info || "", 
+                    data.speed || ""
+                );
                 
-                if (contentDisposition) {
-                    const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-                    if (filenameMatch) {
-                        filename = filenameMatch[1];
-                    }
+                if (data.percent >= 100) {
+                    clearInterval(progressInterval);
+                    setTimeout(() => {
+                        hideLoader();
+                        showThankYouModal();
+                    }, 2000);
                 }
-                
-                const link = document.createElement("a");
-                link.href = window.URL.createObjectURL(blob);
-                link.download = filename;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                window.URL.revokeObjectURL(link.href);
-
-                hideLoader();
-                showThankYouModal();
-            }, 1000);
-        } else {
-            clearInterval(progressInterval);
-            hideLoader();
-            alert("Download failed. Please try again.");
+            }
+        } catch (error) {
+            console.error("Progress check error:", error);
         }
-    };
+    }, 1000);
 
-    xhr.onerror = function () {
+    // Auto-hide loader after 30 seconds (fallback)
+    setTimeout(() => {
         clearInterval(progressInterval);
         hideLoader();
-        alert("Network error during download.");
-    };
-
-    xhr.send();
+    }, 30000);
 }
 
-function startAudioDownload(url, format) {
-    const fileId = Date.now().toString();
+// ✅ FIXED: Audio download function
+function startAudioDownload(url) {
+    const fileId = 'file_' + Date.now().toString();
     showLoaderWithProgress();
     updateLoaderProgress(0, "Starting audio download...", "0/0 MB", "Starting...");
 
-    let progressInterval;
-
-    function checkProgress() {
-        progressInterval = setInterval(async () => {
-            try {
-                const resp = await fetch(`/progress/${fileId}`);
-                const data = await resp.json();
-                
-                if (data.percent !== undefined) {
-                    updateLoaderProgress(
-                        data.percent, 
-                        data.status, 
-                        data.size_info || "", 
-                        data.speed || ""
-                    );
-                    
-                    if (data.percent >= 100) {
-                        clearInterval(progressInterval);
-                        setTimeout(() => {
-                            hideLoader();
-                            showThankYouModal();
-                        }, 1500);
-                    }
-                }
-            } catch (error) {
-                console.error("Progress check error:", error);
-            }
-        }, 500);
-    }
-
-    checkProgress();
-
-    const xhr = new XMLHttpRequest();
-    xhr.open("GET", `/download/audio?url=${encodeURIComponent(url)}&format=${encodeURIComponent(format)}&file_id=${fileId}`, true);
-    xhr.responseType = "blob";
-
-    xhr.onload = function () {
-        clearInterval(progressInterval);
-        
-        if (xhr.status === 200) {
-            updateLoaderProgress(100, "Download completed!", "Complete", "Done");
+    // Open download in new tab
+    const downloadUrl = `/download/audio?url=${encodeURIComponent(url)}&file_id=${fileId}`;
+    window.open(downloadUrl, '_blank');
+    
+    // Monitor progress
+    const progressInterval = setInterval(async () => {
+        try {
+            const response = await fetch(`/progress/${fileId}`);
+            const data = await response.json();
             
-            setTimeout(() => {
-                const blob = xhr.response;
-                const contentDisposition = xhr.getResponseHeader('Content-Disposition');
-                let filename = "audio.mp3";
+            if (data.percent !== undefined) {
+                updateLoaderProgress(
+                    data.percent, 
+                    data.status, 
+                    data.size_info || "", 
+                    data.speed || ""
+                );
                 
-                if (contentDisposition) {
-                    const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-                    if (filenameMatch) {
-                        filename = filenameMatch[1];
-                    }
+                if (data.percent >= 100) {
+                    clearInterval(progressInterval);
+                    setTimeout(() => {
+                        hideLoader();
+                        showThankYouModal();
+                    }, 2000);
                 }
-                
-                const link = document.createElement("a");
-                link.href = window.URL.createObjectURL(blob);
-                link.download = filename;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                window.URL.revokeObjectURL(link.href);
-
-                hideLoader();
-                showThankYouModal();
-            }, 1000);
-        } else {
-            clearInterval(progressInterval);
-            hideLoader();
-            alert("Download failed. Please try again.");
+            }
+        } catch (error) {
+            console.error("Progress check error:", error);
         }
-    };
+    }, 1000);
 
-    xhr.onerror = function () {
+    // Auto-hide loader after 30 seconds (fallback)
+    setTimeout(() => {
         clearInterval(progressInterval);
         hideLoader();
-        alert("Network error during download.");
-    };
-
-    xhr.send();
+    }, 30000);
 }
 
-function downloadThumbnail(url, quality) {
-    alert("Thumbnail download feature coming soon!");
+// ✅ FIXED: Thumbnail download function
+function downloadThumbnail(thumbnailUrl) {
+    const link = document.createElement('a');
+    link.href = thumbnailUrl;
+    link.download = 'youtube-thumbnail.jpg';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showThankYouModal();
 }
 
 // Utility functions
-function extractVideoId(url) {
-    const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/;
-    const match = url.match(regex);
-    return match ? match[1] : 'dQw4w9WgXcQ';
-}
-
 function showThankYouModal() {
     document.getElementById('thank-you-modal').classList.remove('hidden');
 }
 
 function closeThankYouModal() {
     document.getElementById('thank-you-modal').classList.add('hidden');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// Navigation highlighting on scroll
-window.addEventListener('scroll', () => {
-    const sections = ['hero', 'video-downloader', 'audio-downloader', 'thumbnail-downloader'];
-    const navLinks = document.querySelectorAll('.nav-link');
-    
-    let current = '';
-    sections.forEach(section => {
-        const element = document.getElementById(section);
-        if (element) {
-            const rect = element.getBoundingClientRect();
-            if (rect.top <= 100 && rect.bottom >= 100) {
-                current = section;
-            }
-        }
-    });
-    
-    navLinks.forEach(link => {
-        link.classList.remove('active');
-        if (link.getAttribute('href') === `#${current}`) {
-            link.classList.add('active');
-        }
-    });
-});
+// Make functions globally available for HTML onclick handlers
+window.fetchVideoInfo = fetchVideoInfo;
+window.fetchAudioInfo = fetchAudioInfo;
+window.fetchThumbnailInfo = fetchThumbnailInfo;
+window.startVideoDownload = startVideoDownload;
+window.startAudioDownload = startAudioDownload;
+window.downloadThumbnail = downloadThumbnail;
+window.switchTab = switchTab;
+window.toggleMobileMenu = toggleMobileMenu;
+window.scrollToDownloader = scrollToDownloader;
+window.closeThankYouModal = closeThankYouModal;
 
 // Initialize the page
 document.addEventListener('DOMContentLoaded', () => {
@@ -752,7 +633,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // Close mobile menu if open
-            document.getElementById('mobile-menu').classList.add('hidden');
+            const mobileMenu = document.getElementById('mobile-menu');
+            if (mobileMenu) {
+                mobileMenu.classList.add('hidden');
+            }
         });
     });
 });
