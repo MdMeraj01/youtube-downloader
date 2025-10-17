@@ -4,6 +4,8 @@ from flask_cors import CORS
 import yt_dlp
 import uuid
 import math
+import random
+import time
 
 app = Flask(__name__)
 
@@ -27,25 +29,69 @@ CORS(app)
 # Global progress storage
 download_progress = {}
 
+# ✅ ROTATING USER AGENTS TO AVOID DETECTION
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+]
+
+def get_random_user_agent():
+    return random.choice(USER_AGENTS)
+
 def get_ydl_opts():
+    user_agent = get_random_user_agent()
     return {
         'quiet': True,
         'no_warnings': False,
         'extract_flat': False,
-        # ✅ ADD THESE OPTIONS TO AVOID BOT DETECTION
+        
+        # ✅ CRITICAL: BOT DETECTION EVASION
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web'],
+                'player_client': ['android', 'web', 'ios'],
+                'player_skip': ['configs', 'webpage'],
             }
         },
+        
+        # ✅ ADVANCED HTTP HEADERS
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
             'Connection': 'keep-alive',
-        }
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0',
+            'Referer': 'https://www.youtube.com/',
+        },
+        
+        # ✅ NETWORK SETTINGS
+        'socket_timeout': 30,
+        'source_address': '0.0.0.0',
+        
+        # ✅ RETRY SETTINGS
+        'retries': 15,
+        'fragment_retries': 15,
+        'skip_unavailable_fragments': True,
+        'continue_dl': True,
+        
+        # ✅ THROTTLING (IMPORTANT FOR RENDER)
+        'throttled_rate': '512K',
+        'ratelimit': '10M',
+        
+        # ✅ CACHE SETTINGS
+        'cachedir': False,
+        
+        # ✅ ERROR HANDLING
+        'ignoreerrors': True,
+        'no_check_certificate': True,
     }
 
 def format_file_size(size_bytes):
@@ -62,7 +108,7 @@ def format_file_size(size_bytes):
     
     return f"{s} {size_names[i]}"
 
-# ✅ IMPROVED: GET ALL QUALITIES INCLUDING 4K/8K
+# ✅ IMPROVED VIDEO INFO WITH ERROR HANDLING
 @app.route("/info/video", methods=["GET"])
 def get_video_info():
     url = request.args.get("url")
@@ -70,6 +116,9 @@ def get_video_info():
         return jsonify({"error": "No URL provided"}), 400
 
     try:
+        # ✅ ADD SMALL DELAY TO AVOID RATE LIMITING
+        time.sleep(1)
+        
         ydl_opts = get_ydl_opts()
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -79,17 +128,15 @@ def get_video_info():
             all_formats = info.get('formats', [])
             
             for fmt in all_formats:
-                # Include ALL video formats (with or without audio)
                 if fmt.get('vcodec') != 'none':
                     filesize = fmt.get('filesize')
                     if not filesize:
                         filesize = fmt.get('filesize_approx')
                     
-                    # Calculate approximate size if still not available
                     if not filesize and fmt.get('tbr') and info.get('duration'):
-                        tbr = fmt.get('tbr', 0) * 1000  # Convert to bits
+                        tbr = fmt.get('tbr', 0) * 1000
                         duration = info.get('duration', 0)
-                        filesize = (tbr * duration) / 8  # Convert to bytes
+                        filesize = (tbr * duration) / 8
                     
                     format_info = {
                         'format_id': fmt.get('format_id', ''),
@@ -103,7 +150,6 @@ def get_video_info():
                         'acodec': fmt.get('acodec', ''),
                     }
                     
-                    # Set proper quality label
                     if fmt.get('height'):
                         if fmt['height'] >= 4320:
                             format_info['quality'] = "8K"
@@ -130,14 +176,11 @@ def get_video_info():
                     else:
                         format_info['quality'] = 'Unknown'
                     
-                    # Only add meaningful formats
                     if format_info['quality'] not in ['', 'Unknown', 'none']:
                         formats.append(format_info)
             
-            # Sort by quality (height) - highest first
             formats.sort(key=lambda x: x.get('height', 0) or 0, reverse=True)
             
-            # Remove duplicates based on quality
             seen_qualities = set()
             unique_formats = []
             
@@ -152,14 +195,20 @@ def get_video_info():
                 'duration': info.get('duration_string', 'Unknown'),
                 'uploader': info.get('uploader', 'Unknown'),
                 'thumbnail': info.get('thumbnail', ''),
-                'formats': unique_formats[:10]  # Show top 10 qualities
+                'formats': unique_formats[:8]  # Reduce to avoid overload
             })
             
     except Exception as e:
         print(f"Video info error: {e}")
-        return jsonify({"error": f"Failed to fetch video info: {str(e)}"}), 500
+        # ✅ RETURN USER-FRIENDLY ERROR
+        if "429" in str(e) or "Too Many Requests" in str(e):
+            return jsonify({"error": "YouTube rate limit exceeded. Please try again in a few minutes."}), 429
+        elif "Sign in" in str(e) or "bot" in str(e):
+            return jsonify({"error": "Temporary YouTube restriction. Please try a different video or try again later."}), 423
+        else:
+            return jsonify({"error": f"Failed to fetch video info: {str(e)}"}), 500
 
-# ✅ REAL AUDIO INFO
+# ✅ SIMILAR UPDATE FOR AUDIO INFO
 @app.route("/info/audio", methods=["GET"])
 def get_audio_info():
     url = request.args.get("url")
@@ -167,6 +216,8 @@ def get_audio_info():
         return jsonify({"error": "No URL provided"}), 400
 
     try:
+        time.sleep(1)  # Rate limiting protection
+        
         ydl_opts = get_ydl_opts()
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -190,10 +241,8 @@ def get_audio_info():
                     }
                     audio_formats.append(format_info)
             
-            # Sort by bitrate (quality)
             audio_formats.sort(key=lambda x: x.get('abr', 0), reverse=True)
             
-            # Remove duplicates
             seen_bitrates = set()
             unique_formats = []
             for fmt in audio_formats:
@@ -206,14 +255,19 @@ def get_audio_info():
                 'title': info.get('title', 'YouTube Audio'),
                 'duration': info.get('duration_string', 'Unknown'),
                 'uploader': info.get('uploader', 'Unknown'),
-                'audio_formats': unique_formats[:4]
+                'audio_formats': unique_formats[:3]  # Reduce numbers
             })
             
     except Exception as e:
         print(f"Audio info error: {e}")
-        return jsonify({"error": f"Failed to fetch audio info: {str(e)}"}), 500
+        if "429" in str(e) or "Too Many Requests" in str(e):
+            return jsonify({"error": "YouTube rate limit exceeded. Please try again in a few minutes."}), 429
+        elif "Sign in" in str(e) or "bot" in str(e):
+            return jsonify({"error": "Temporary YouTube restriction. Please try a different video or try again later."}), 423
+        else:
+            return jsonify({"error": f"Failed to fetch audio info: {str(e)}"}), 500
 
-# ✅ VIDEO DOWNLOAD
+# ✅ VIDEO DOWNLOAD WITH ENHANCED CONFIG
 @app.route("/download/video", methods=["GET"])
 def download_video():
     try:
@@ -226,7 +280,6 @@ def download_video():
 
         output_template = os.path.join(DOWNLOAD_FOLDER, f"{file_id}.%(ext)s")
 
-        # Get video info for filename
         ydl_info_opts = get_ydl_opts()
         with yt_dlp.YoutubeDL(ydl_info_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -272,9 +325,8 @@ def download_video():
                     "file_id": file_id
                 }
 
-        # Better format selection with bot avoidance
         if quality == 'best':
-            format_spec = 'best[height<=4320]'  # Up to 8K
+            format_spec = 'best[height<=1080]'  # Limit to 1080p to reduce load
         else:
             format_spec = quality
 
@@ -284,21 +336,26 @@ def download_video():
             "no_warnings": False,
             "format": format_spec,
             "progress_hooks": [progress_hook],
-            # ✅ ADD BOT AVOIDANCE TO DOWNLOAD OPTIONS TOO
+            
+            # ✅ ALL BOT EVASION SETTINGS
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
+                    'player_client': ['android', 'web', 'ios'],
+                    'player_skip': ['configs', 'webpage'],
                 }
             },
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'User-Agent': get_random_user_agent(),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                 'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://www.youtube.com/',
             },
-            # ✅ RETRY SETTINGS
             'retries': 10,
             'fragment_retries': 10,
             'skip_unavailable_fragments': True,
+            'socket_timeout': 30,
+            'throttled_rate': '1M',
         }
 
         download_progress[file_id] = {
@@ -312,13 +369,11 @@ def download_video():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
-        # Find and send downloaded file
         for f in os.listdir(DOWNLOAD_FOLDER):
             if f.startswith(file_id):
                 downloaded_file = os.path.join(DOWNLOAD_FOLDER, f)
                 file_ext = f.split('.')[-1] if '.' in f else 'mp4'
                 
-                # Cleanup progress data
                 if file_id in download_progress:
                     del download_progress[file_id]
                     
@@ -328,7 +383,6 @@ def download_video():
                     download_name=f"{video_title}.{file_ext}"
                 )
                 
-                # Cleanup file after sending
                 try:
                     if os.path.exists(downloaded_file):
                         os.remove(downloaded_file)
@@ -346,7 +400,7 @@ def download_video():
             del download_progress[file_id]
         return jsonify({"error": f"Download failed: {str(e)}"}), 500
 
-# ✅ AUDIO DOWNLOAD
+# ✅ KEEP OTHER ROUTES SAME (health, progress, etc.)
 @app.route("/download/audio", methods=["GET"])
 def download_audio():
     try:
@@ -414,18 +468,18 @@ def download_audio():
                 "preferredquality": "192",
             }],
             "progress_hooks": [progress_hook],
-            # ✅ ADD BOT AVOIDANCE
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'web'],
+                    'player_client': ['android', 'web', 'ios'],
+                    'player_skip': ['configs', 'webpage'],
                 }
             },
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': get_random_user_agent(),
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': 'https://www.youtube.com/',
             },
-            # ✅ RETRY SETTINGS
             'retries': 10,
             'fragment_retries': 10,
             'skip_unavailable_fragments': True,
@@ -455,11 +509,9 @@ def download_audio():
                     download_name=f"{audio_title}.mp3"
                 )
                 
-                # Cleanup files after sending
                 try:
                     if os.path.exists(downloaded_file):
                         os.remove(downloaded_file)
-                    # Remove original file before conversion
                     original_file = downloaded_file.replace('.mp3', '.m4a')
                     if os.path.exists(original_file):
                         os.remove(original_file)
@@ -488,7 +540,7 @@ def get_progress(file_id):
     })
     return jsonify(progress)
 
-# ✅ HEALTH CHECK (Render requires this)
+# ✅ HEALTH CHECK
 @app.route("/health")
 def health_check():
     return jsonify({"status": "healthy", "message": "YouTube Downloader is running"})
@@ -514,60 +566,7 @@ def contact():
 def test():
     return jsonify({"status": "success", "message": "Server working!"})
 
-# ✅ Render specific - No need to manually run the app
-# Render automatically runs: gunicorn app:app
-if __name__ == '__main__':
-    app.run(debug=True)
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+# ✅ Render specific
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
